@@ -2,4 +2,5 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 outputs/*.usd
+outputs/*.mp4
 !outputs/.gitkeep

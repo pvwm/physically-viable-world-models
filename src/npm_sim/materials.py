@@ -12,6 +12,7 @@ class MaterialPreset:
 
 MATERIALS: dict[str, MaterialPreset] = {
     "rubber": MaterialPreset(density=1100.0, friction=1.10, restitution=0.20),
+    "superball": MaterialPreset(density=1150.0, friction=0.65, restitution=0.90),
     "wood": MaterialPreset(density=700.0, friction=0.70, restitution=0.05),
     "steel": MaterialPreset(density=7850.0, friction=0.45, restitution=0.05),
 }

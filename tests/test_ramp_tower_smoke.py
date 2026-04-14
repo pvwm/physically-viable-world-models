@@ -14,33 +14,49 @@ if str(SRC) not in sys.path:
 from npm_sim.ramp_tower import run_simulation
 
 
-def _quat_angle_delta_rad(q0: np.ndarray, q1: np.ndarray) -> float:
-    q0 = q0 / np.linalg.norm(q0)
-    q1 = q1 / np.linalg.norm(q1)
-    dot = float(np.clip(abs(np.dot(q0, q1)), -1.0, 1.0))
-    return 2.0 * np.arccos(dot)
-
-
 class RampTowerSmokeTest(unittest.TestCase):
-    def test_ramp_tower_smoke(self) -> None:
-        result = run_simulation(viewer="null", num_frames=180, device="cpu")
+    def _assert_common_outcome(self, result) -> None:
+        self.assertTrue(np.isfinite(result.final_particle_positions).all())
+        self.assertGreater(result.final_ball_position[1], result.initial_ball_position[1] + 0.50)
 
-        self.assertTrue(np.isfinite(result.final_body_poses).all())
-        self.assertGreater(result.final_ball_position[1], result.initial_ball_position[1] + 0.20)
+    def _target_metrics(self, result) -> list[tuple[float, float]]:
+        target_metrics = []
+        for wall_index, (start, end) in enumerate(result.target_particle_ranges):
+            initial_center = result.initial_target_centers[wall_index]
+            final_center = result.final_target_centers[wall_index]
+            initial_target = result.initial_particle_positions[start:end]
+            final_target = result.final_particle_positions[start:end]
+            translation = float(np.linalg.norm(final_center - initial_center))
+            deformation = float(
+                np.linalg.norm(
+                    (final_target - final_center) - (initial_target - initial_center),
+                    axis=1,
+                ).mean()
+            )
+            target_metrics.append((translation, deformation))
+        return target_metrics
 
-        cube_translation = np.linalg.norm(
-            result.final_cube_transforms[:, :3] - result.initial_cube_transforms[:, :3],
-            axis=1,
-        )
-        cube_rotation = np.array(
-            [
-                _quat_angle_delta_rad(result.initial_cube_transforms[i, 3:], result.final_cube_transforms[i, 3:])
-                for i in range(len(result.cube_body_indices))
-            ]
-        )
+    def test_jelly_single_wall_smoke(self) -> None:
+        result = run_simulation(viewer="null", num_frames=180, device="cpu", wall_count=1)
 
-        moved_cube = np.any(cube_translation > 0.02) or np.any(cube_rotation > np.deg2rad(5.0))
-        self.assertTrue(moved_cube)
+        self._assert_common_outcome(result)
+        self.assertEqual(len(result.target_particle_ranges), 1)
+
+        wall_translation, wall_deformation = self._target_metrics(result)[0]
+        self.assertTrue(wall_translation > 0.04 or wall_deformation > 0.03)
+
+    def test_jelly_domino_smoke(self) -> None:
+        result = run_simulation(viewer="null", num_frames=180, device="cpu", wall_count=2)
+
+        self._assert_common_outcome(result)
+        self.assertEqual(len(result.target_particle_ranges), 2)
+
+        target_metrics = self._target_metrics(result)
+        first_wall_translation, first_wall_deformation = target_metrics[0]
+        second_wall_translation, second_wall_deformation = target_metrics[1]
+
+        self.assertTrue(first_wall_translation > 0.04 or first_wall_deformation > 0.03)
+        self.assertTrue(second_wall_translation > 0.03 or second_wall_deformation > 0.01)
 
 
 if __name__ == "__main__":
