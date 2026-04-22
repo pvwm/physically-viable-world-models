@@ -14,5 +14,11 @@ outputs/_inspect_frames*/
 # generated cup OBJ meshes. Both are rebuilt on demand by the pipeline.
 outputs/_genesis/
 
+# Per-frame mesh / particle exports for Blender re-rendering. Generated
+# by scripts/export_frames_*.py, regeneratable on demand and large
+# (hundreds of MB).
+outputs/blender/
+outputs/blender_exports.zip
+
 # Editor / tool scratch files.
 .codex
