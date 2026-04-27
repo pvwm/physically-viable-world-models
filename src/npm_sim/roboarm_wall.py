@@ -33,12 +33,14 @@ FLOOR_LENGTH = 2.80
 FLOOR_WIDTH = 1.80
 FLOOR_THICKNESS = 0.08
 FLOOR_CENTER_Y = 0.80
+FLOOR_HALF_EXTENTS = (FLOOR_WIDTH * 0.5, FLOOR_LENGTH * 0.5, FLOOR_THICKNESS * 0.5)
 
 WALL_WIDTH = 0.68
 WALL_THICKNESS = 0.24
 WALL_HEIGHT = 0.66
 WALL_CENTER_Y = 0.72
 WALL_DENSITY_SCALE = 0.50
+WALL_HALF_EXTENTS = (WALL_WIDTH * 0.5, WALL_THICKNESS * 0.5, WALL_HEIGHT * 0.5)
 
 FRANKA_ASSET_NAME = "franka_emika_panda"
 FRANKA_URDF = "urdf/fr3_franka_hand.urdf"
@@ -61,6 +63,7 @@ DEFAULT_PUSH_MODE = PUSH_MODE_HIGH
 TOOL_PATH_X = 0.0
 TOOL_PATH_START_Y = 0.35
 TOOL_PATH_END_Y = 0.57
+TOOL_PATH_LENGTH = TOOL_PATH_END_Y - TOOL_PATH_START_Y
 TOOL_PATH_Z_BY_MODE = {
     PUSH_MODE_HIGH: 0.54,
     PUSH_MODE_LOW: 0.12,
@@ -211,11 +214,7 @@ CAMERA_FOV = 50.0
 VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
 VIDEO_NUM_FRAMES = FRAME_RATE * 4
-VIDEO_NUM_FRAMES_BY_MODE = {
-    PUSH_MODE_HIGH: FRAME_RATE * 4,
-    PUSH_MODE_LOW: FRAME_RATE * 4,
-    PUSH_MODE_CENTER: FRAME_RATE * 4,
-}
+VIDEO_NUM_FRAMES_BY_MODE = dict.fromkeys((PUSH_MODE_HIGH, PUSH_MODE_LOW, PUSH_MODE_CENTER), VIDEO_NUM_FRAMES)
 
 FLOOR_COLOR = wp.vec3(0.52, 0.55, 0.57)
 WALL_COLOR = wp.vec3(0.64, 0.43, 0.24)
@@ -267,10 +266,7 @@ def _friction_coefficient(material: MaterialPreset, friction_mode: str) -> float
     return FRICTION_COEFFICIENT_BY_MODE[friction_mode]
 
 
-def _wall_shape_cfg(
-    material: MaterialPreset,
-    friction_mode: str = DEFAULT_FRICTION_MODE,
-) -> newton.ModelBuilder.ShapeConfig:
+def _wall_shape_cfg(material: MaterialPreset, friction_mode: str = DEFAULT_FRICTION_MODE) -> newton.ModelBuilder.ShapeConfig:
     return newton.ModelBuilder.ShapeConfig(
         density=material.density * WALL_DENSITY_SCALE,
         mu=_friction_coefficient(material, friction_mode),
@@ -278,10 +274,7 @@ def _wall_shape_cfg(
     )
 
 
-def _ground_shape_cfg(
-    material: MaterialPreset,
-    friction_mode: str = DEFAULT_FRICTION_MODE,
-) -> newton.ModelBuilder.ShapeConfig:
+def _ground_shape_cfg(material: MaterialPreset, friction_mode: str = DEFAULT_FRICTION_MODE) -> newton.ModelBuilder.ShapeConfig:
     cfg = _static_shape_cfg(material)
     cfg.mu = _friction_coefficient(material, friction_mode)
     cfg.restitution = min(material.restitution, 0.02)
@@ -293,6 +286,14 @@ def _tool_shape_cfg(material: MaterialPreset) -> newton.ModelBuilder.ShapeConfig
         density=material.density,
         mu=max(0.45, material.friction),
         restitution=min(material.restitution, 0.02),
+    )
+
+
+def _add_box_shape(builder, body: int, pos: wp.vec3, half_extents: tuple[float, float, float], cfg, color, label: str) -> None:
+    hx, hy, hz = half_extents
+    builder.add_shape_box(
+        body=body, xform=wp.transform(p=pos, q=wp.quat_identity()),
+        hx=hx, hy=hy, hz=hz, cfg=cfg, color=color, label=label,
     )
 
 
@@ -313,19 +314,16 @@ def _quat_to_matrix_xyzw(quat_xyzw: np.ndarray) -> np.ndarray:
 
 
 def wall_tilt_degrees(wall_transform: np.ndarray) -> float:
-    rotation = _quat_to_matrix_xyzw(wall_transform[3:7])
-    wall_up = rotation @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    wall_up = _quat_to_matrix_xyzw(wall_transform[3:7])[:, 2]
     return math.degrees(math.acos(float(np.clip(wall_up[2], -1.0, 1.0))))
 
 
 def wall_top_position(wall_transform: np.ndarray) -> np.ndarray:
-    rotation = _quat_to_matrix_xyzw(wall_transform[3:7])
-    return wall_transform[:3] + rotation @ np.array([0.0, 0.0, WALL_HEIGHT * 0.5], dtype=np.float64)
+    return wall_transform[:3] + _quat_to_matrix_xyzw(wall_transform[3:7]) @ np.array([0.0, 0.0, WALL_HALF_EXTENTS[2]], dtype=np.float64)
 
 
 def _transform_point(transform_xyzw: np.ndarray, point: wp.vec3) -> np.ndarray:
-    rotation = _quat_to_matrix_xyzw(transform_xyzw[3:7])
-    return transform_xyzw[:3] + rotation @ np.array([float(point[0]), float(point[1]), float(point[2])])
+    return transform_xyzw[:3] + _quat_to_matrix_xyzw(transform_xyzw[3:7]) @ np.array([float(point[0]), float(point[1]), float(point[2])])
 
 
 def _validate_push_mode(push_mode: str) -> str:
@@ -337,14 +335,13 @@ def _validate_push_mode(push_mode: str) -> str:
 
 def _tool_path_progress(time_seconds: float, push_mode: str) -> tuple[float, float]:
     _validate_push_mode(push_mode)
-    accel_seconds = ROBOT_ACCEL_SECONDS
     if time_seconds <= ROBOT_HOLD_SECONDS:
         return 0.0, 0.0
-    if time_seconds >= ROBOT_HOLD_SECONDS + accel_seconds:
+    if time_seconds >= ROBOT_HOLD_SECONDS + ROBOT_ACCEL_SECONDS:
         return 1.0, 0.0
 
-    normalized = (time_seconds - ROBOT_HOLD_SECONDS) / accel_seconds
-    return normalized * normalized, 2.0 * normalized / accel_seconds
+    normalized = (time_seconds - ROBOT_HOLD_SECONDS) / ROBOT_ACCEL_SECONDS
+    return normalized * normalized, 2.0 * normalized / ROBOT_ACCEL_SECONDS
 
 
 def franka_joint_target(time_seconds: float, push_mode: str = DEFAULT_PUSH_MODE) -> tuple[np.ndarray, np.ndarray]:
@@ -364,11 +361,9 @@ def franka_joint_target(time_seconds: float, push_mode: str = DEFAULT_PUSH_MODE)
 def franka_tool_target(time_seconds: float, push_mode: str = DEFAULT_PUSH_MODE) -> tuple[np.ndarray, np.ndarray]:
     push_mode = _validate_push_mode(push_mode)
     progress, progress_rate = _tool_path_progress(time_seconds, push_mode)
-    path_length = TOOL_PATH_END_Y - TOOL_PATH_START_Y
-    tool_path_z = TOOL_PATH_Z_BY_MODE[push_mode]
     return (
-        np.array([TOOL_PATH_X, TOOL_PATH_START_Y + path_length * progress, tool_path_z], dtype=np.float32),
-        np.array([0.0, path_length * progress_rate, 0.0], dtype=np.float32),
+        np.array([TOOL_PATH_X, TOOL_PATH_START_Y + TOOL_PATH_LENGTH * progress, TOOL_PATH_Z_BY_MODE[push_mode]], dtype=np.float32),
+        np.array([0.0, TOOL_PATH_LENGTH * progress_rate, 0.0], dtype=np.float32),
     )
 
 
@@ -393,13 +388,62 @@ class RoboarmWallDemo:
 
         arm_preset = MATERIALS[arm_material]
         wall_preset = MATERIALS[wall_material]
-        tool_cfg = _tool_shape_cfg(arm_preset)
-        wall_cfg = _wall_shape_cfg(wall_preset, self.friction_mode)
-        ground_cfg = _ground_shape_cfg(wall_preset, self.friction_mode)
-
         builder = newton.ModelBuilder()
         builder.rigid_gap = RIGID_GAP
+        self._add_robot(builder, _tool_shape_cfg(arm_preset))
 
+        _add_box_shape(
+            builder,
+            -1,
+            wp.vec3(0.0, FLOOR_CENTER_Y, -FLOOR_HALF_EXTENTS[2]),
+            FLOOR_HALF_EXTENTS,
+            _ground_shape_cfg(wall_preset, self.friction_mode),
+            FLOOR_COLOR,
+            "floor",
+        )
+        self.wall_body_index = builder.add_body(
+            xform=wp.transform(p=wp.vec3(0.0, WALL_CENTER_Y, WALL_HALF_EXTENTS[2]), q=wp.quat_identity()),
+            label="wall",
+        )
+        self.wall_joint_index = builder.joint_count - 1
+        _add_box_shape(
+            builder,
+            self.wall_body_index,
+            wp.vec3(0.0, 0.0, 0.0),
+            WALL_HALF_EXTENTS,
+            _wall_shape_cfg(wall_preset, self.friction_mode),
+            WALL_COLOR,
+            "wall_shape",
+        )
+
+        self.model = builder.finalize()
+        self.wall_q_start = int(self.model.joint_q_start.numpy()[self.wall_joint_index])
+        self.wall_qd_start = int(self.model.joint_qd_start.numpy()[self.wall_joint_index])
+        self.collision_pipeline = newton.CollisionPipeline(self.model)
+        self.solver = newton.solvers.SolverXPBD(
+            self.model,
+            iterations=SOLVER_ITERATIONS,
+            rigid_contact_relaxation=SOLVER_CONTACT_RELAXATION,
+            angular_damping=SOLVER_ANGULAR_DAMPING,
+            enable_restitution=True,
+        )
+        self.state_0 = self.model.state()
+        self.state_1 = self.model.state()
+        self.control = self.model.control()
+        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
+        self.contacts = self.collision_pipeline.contacts()
+
+        self.viewer.set_model(self.model)
+        self.viewer.set_camera(pos=CAMERA_POS, pitch=CAMERA_PITCH, yaw=CAMERA_YAW)
+        if hasattr(self.viewer, "camera") and hasattr(self.viewer.camera, "fov"):
+            self.viewer.camera.fov = CAMERA_FOV
+
+        self.initial_body_poses = self.body_poses()
+        self.initial_tool_position = self.tool_position()
+        self.tool_position_history = [self.initial_tool_position.copy()]
+        self.max_wall_tilt_degrees = self.wall_tilt_degrees()
+
+    def _add_robot(self, builder: newton.ModelBuilder, tool_cfg: newton.ModelBuilder.ShapeConfig) -> None:
         asset_root = newton.utils.download_asset(FRANKA_ASSET_NAME)
         builder.add_urdf(
             asset_root / FRANKA_URDF,
@@ -429,61 +473,6 @@ class RoboarmWallDemo:
             color=TOOL_COLOR,
             label="franka_push_tool",
         )
-
-        floor_center = wp.vec3(0.0, FLOOR_CENTER_Y, -FLOOR_THICKNESS * 0.5)
-        builder.add_shape_box(
-            body=-1,
-            xform=wp.transform(p=floor_center, q=wp.quat_identity()),
-            hx=FLOOR_WIDTH * 0.5,
-            hy=FLOOR_LENGTH * 0.5,
-            hz=FLOOR_THICKNESS * 0.5,
-            cfg=ground_cfg,
-            color=FLOOR_COLOR,
-            label="floor",
-        )
-
-        wall_center = wp.vec3(0.0, WALL_CENTER_Y, WALL_HEIGHT * 0.5)
-        self.wall_body_index = builder.add_body(
-            xform=wp.transform(p=wall_center, q=wp.quat_identity()),
-            label="wall",
-        )
-        self.wall_joint_index = builder.joint_count - 1
-        builder.add_shape_box(
-            body=self.wall_body_index,
-            hx=WALL_WIDTH * 0.5,
-            hy=WALL_THICKNESS * 0.5,
-            hz=WALL_HEIGHT * 0.5,
-            cfg=wall_cfg,
-            color=WALL_COLOR,
-            label="wall_shape",
-        )
-
-        self.model = builder.finalize()
-        self.wall_q_start = int(self.model.joint_q_start.numpy()[self.wall_joint_index])
-        self.wall_qd_start = int(self.model.joint_qd_start.numpy()[self.wall_joint_index])
-        self.collision_pipeline = newton.CollisionPipeline(self.model)
-        self.solver = newton.solvers.SolverXPBD(
-            self.model,
-            iterations=SOLVER_ITERATIONS,
-            rigid_contact_relaxation=SOLVER_CONTACT_RELAXATION,
-            angular_damping=SOLVER_ANGULAR_DAMPING,
-            enable_restitution=True,
-        )
-        self.state_0 = self.model.state()
-        self.state_1 = self.model.state()
-        self.control = self.model.control()
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
-        self.contacts = self.collision_pipeline.contacts()
-
-        self.viewer.set_model(self.model)
-        self.viewer.set_camera(pos=CAMERA_POS, pitch=CAMERA_PITCH, yaw=CAMERA_YAW)
-        if hasattr(self.viewer, "camera") and hasattr(self.viewer.camera, "fov"):
-            self.viewer.camera.fov = CAMERA_FOV
-
-        self.initial_body_poses = self.body_poses()
-        self.initial_tool_position = self.tool_position()
-        self.tool_position_history = [self.initial_tool_position.copy()]
-        self.max_wall_tilt_degrees = self.wall_tilt_degrees()
 
     def body_poses(self) -> np.ndarray:
         return self.state_0.body_q.numpy().copy()
@@ -574,10 +563,7 @@ def build_scene(
     if device:
         wp.set_device(device)
 
-    if isinstance(viewer, str):
-        viewer_obj = _build_viewer(viewer, num_frames=num_frames, output_path=output_path)
-    else:
-        viewer_obj = viewer
+    viewer_obj = _build_viewer(viewer, num_frames=num_frames, output_path=output_path) if isinstance(viewer, str) else viewer
 
     return RoboarmWallDemo(
         viewer=viewer_obj,
@@ -662,32 +648,14 @@ def render_video(
     )
 
     command = [
-        ffmpeg,
-        "-y",
-        "-f",
-        "rawvideo",
-        "-vcodec",
-        "rawvideo",
-        "-pix_fmt",
-        "rgb24",
-        "-s",
-        f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}",
-        "-r",
-        str(FRAME_RATE),
-        "-i",
-        "-",
-        "-an",
-        "-vcodec",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-pix_fmt",
-        "yuv420p",
-        "-movflags",
-        "+faststart",
-        str(output),
+        ffmpeg, "-y", "-f", "rawvideo", "-vcodec", "rawvideo", "-pix_fmt", "rgb24",
+        "-s", f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}", "-r", str(FRAME_RATE), "-i", "-", "-an",
+        "-vcodec", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", str(output),
     ]
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    stdin = process.stdin
+    assert stdin is not None
 
     try:
         for frame_index in range(num_frames):
@@ -696,19 +664,17 @@ def render_video(
             demo.render()
             frame = viewer.get_frame()
             frame_np = np.ascontiguousarray(frame.numpy())
-            assert process.stdin is not None
-            process.stdin.write(frame_np.tobytes())
+            stdin.write(frame_np.tobytes())
 
-        assert process.stdin is not None
-        process.stdin.close()
+        stdin.close()
         stderr = process.stderr.read().decode("utf-8", errors="replace") if process.stderr is not None else ""
         return_code = process.wait()
         if return_code != 0:
             raise RuntimeError(f"ffmpeg failed with exit code {return_code}: {stderr.strip()}")
         return output
     finally:
-        if process.stdin is not None and not process.stdin.closed:
-            process.stdin.close()
+        if not stdin.closed:
+            stdin.close()
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=5)
