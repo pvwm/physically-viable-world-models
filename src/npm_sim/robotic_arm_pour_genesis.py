@@ -14,10 +14,13 @@ from typing import Optional
 import numpy as np
 
 FRAME_RATE = 60
-# The moving held glass needs a tighter SPH-rigid coupling step than the
-# static cup scene because the cup is kinematically driven through the robot
-# hand pose while holding SPH water.
-SIM_SUBSTEPS = 84
+# Drive the moving cup at the same cadence as the SPH-rigid coupling. Genesis
+# accepts external pose commands at scene-step granularity, so we expose the
+# former internal substeps as explicit Python microsteps.
+MICROSTEPS_PER_FRAME = 84
+VIDEO_DT = 1.0 / FRAME_RATE
+PHYSICS_DT = VIDEO_DT / MICROSTEPS_PER_FRAME
+SIM_SUBSTEPS = 1
 
 GLASS_HEIGHT = 0.24
 GLASS_BOTTOM_RADIUS = 0.072
@@ -25,6 +28,7 @@ GLASS_TOP_RADIUS = 0.098
 GLASS_WALL_THICKNESS = 0.010
 GLASS_BASE_THICKNESS = 0.050
 GLASS_MESH_SEGMENTS = 48
+GLASS_FILLET_SEGMENTS = 8
 
 GLASS_OUTER_RADIUS = 0.5 * (GLASS_BOTTOM_RADIUS + GLASS_TOP_RADIUS) + 0.004
 GLASS_INNER_RADIUS = GLASS_OUTER_RADIUS - max(GLASS_WALL_THICKNESS * 2.0, 0.020)
@@ -32,11 +36,26 @@ GLASS_INNER_FLOOR_Z = -GLASS_HEIGHT * 0.5 + GLASS_BASE_THICKNESS
 GLASS_RIM_Z = GLASS_HEIGHT * 0.5
 
 WATER_PARTICLE_SIZE = 0.006
+GLASS_COUP_FRICTION = 0.05
+GLASS_COUP_SOFTNESS = 0.0015
+GLASS_SDF_CELL_SIZE = 0.0025
+GLASS_SDF_MIN_RES = 64
+GLASS_SDF_MAX_RES = 256
+GLASS_INNER_FILLET_RADIUS = 2.0 * WATER_PARTICLE_SIZE
+ENABLE_SOURCE_BOUNDARY_CORRECTION = True
+SOURCE_BOUNDARY_CORRECTION_INTERVAL = 1
+SOURCE_WALL_CORRECTION_RIM_CLEARANCE = 0.030
+SOURCE_WALL_CORRECTION_OUTER_MARGIN = -0.25 * WATER_PARTICLE_SIZE
+SOURCE_WALL_CORRECTION_CLEARANCE = 0.10 * WATER_PARTICLE_SIZE
+SOURCE_BASE_CORRECTION_CLEARANCE = 0.55 * WATER_PARTICLE_SIZE
 WATER_DENSITY = 1000.0
 WATER_VISCOSITY = 1.0e-3
+LIQUID_SURFACE_TENSION = 0.01
+LIQUID_COLOR = (0.25, 0.55, 0.95, 1.0)
+LIQUID_VIS_MODE = "particle"
 WATER_FILL_FRACTION = 0.80
 WATER_BRIM_CLEARANCE = 0.006
-WATER_FLOOR_CLEARANCE = 3.0 * WATER_PARTICLE_SIZE
+WATER_FLOOR_CLEARANCE = WATER_PARTICLE_SIZE
 # Genesis's regular particle sampling settles lower than the nominal emission
 # cylinder. This factor is calibrated so the settled frame-0 surface is 80% of
 # the inner cavity height, not just 80% of the pre-settle emission height.
@@ -167,7 +186,7 @@ PANDA_Q_FULL_POUR = np.array(
     ],
     dtype=np.float32,
 )
-POUR_POSE_FRACTION = 0.935
+POUR_POSE_FRACTION = 0.80
 PANDA_Q_POUR = PANDA_Q_UPRIGHT + (PANDA_Q_FULL_POUR - PANDA_Q_UPRIGHT) * POUR_POSE_FRACTION
 PANDA_HOME_Q = PANDA_Q_PICKUP_WAYPOINTS[0].copy()
 PANDA_FINGER_OPENING = 0.026
@@ -179,9 +198,9 @@ PANDA_GRASP_TARGET_LOCAL = HANDLE_LOCAL_POS.copy()
 SURFACE_HOLD_SECONDS = 0.60
 LIFT_SECONDS = 1.40
 PRE_POUR_HOLD_SECONDS = 0.35
-TILT_SECONDS = 2.00
+TILT_SECONDS = 3.00
 POUR_HOLD_SECONDS = 0.00
-RETURN_SECONDS = 1.10
+RETURN_SECONDS = 1.60
 PLACE_BACK_SECONDS = 1.60
 FINAL_HOLD_SECONDS = 0.90
 MAX_TILT_DEG = 82.6
@@ -210,11 +229,61 @@ SETTLED_PARTICLES_CACHE = (
     Path(__file__).resolve().parents[2]
     / "outputs"
     / "_genesis"
-    / "robotic_arm_pickup_pour_base050_p006_fill080_over1405_clear018_settled_water.npy"
+    / "robotic_arm_pickup_pour_base050_p006_fill080_over1405_clear006_fric005_soft0015_pose080_slow_fillet012_micro084_sdf0025_align0_corrbase_settled_water.npy"
 )
 GLASS_MESH_PATH = Path(__file__).resolve().parents[2] / "outputs" / "_genesis" / "pouring_glass.obj"
 SETTLE_BAKE_SECONDS = 0.8
 STASHED_PARTICLE_POS = np.array([10.0, 10.0, -10.0], dtype=np.float32)
+
+
+def configure_honey_variant() -> None:
+    """Configure this module for a higher-viscosity honey-like pour."""
+    global MICROSTEPS_PER_FRAME
+    global PHYSICS_DT
+    global POUR_HOLD_SECONDS
+    global VIDEO_NUM_FRAMES
+    global WATER_DENSITY
+    global WATER_VISCOSITY
+    global LIQUID_SURFACE_TENSION
+    global LIQUID_COLOR
+    global LIQUID_VIS_MODE
+    global GLASS_COUP_FRICTION
+    global SOURCE_BOUNDARY_CORRECTION_INTERVAL
+    global POUR_POSE_FRACTION
+    global PANDA_Q_POUR
+    global SETTLED_PARTICLES_CACHE
+
+    MICROSTEPS_PER_FRAME = 360
+    PHYSICS_DT = VIDEO_DT / MICROSTEPS_PER_FRAME
+    WATER_DENSITY = 1400.0
+    WATER_VISCOSITY = 0.030
+    LIQUID_SURFACE_TENSION = 0.04
+    LIQUID_COLOR = (1.0, 0.58, 0.08, 1.0)
+    LIQUID_VIS_MODE = "particle"
+    GLASS_COUP_FRICTION = 0.14
+    SOURCE_BOUNDARY_CORRECTION_INTERVAL = 4
+    POUR_HOLD_SECONDS = 8.4
+    VIDEO_NUM_FRAMES = int(round(
+        (
+            SURFACE_HOLD_SECONDS
+            + LIFT_SECONDS
+            + PRE_POUR_HOLD_SECONDS
+            + TILT_SECONDS
+            + POUR_HOLD_SECONDS
+            + RETURN_SECONDS
+            + PLACE_BACK_SECONDS
+            + FINAL_HOLD_SECONDS
+        )
+        * FRAME_RATE
+    ))
+    POUR_POSE_FRACTION = 0.84
+    PANDA_Q_POUR = PANDA_Q_UPRIGHT + (PANDA_Q_FULL_POUR - PANDA_Q_UPRIGHT) * POUR_POSE_FRACTION
+    SETTLED_PARTICLES_CACHE = (
+        Path(__file__).resolve().parents[2]
+        / "outputs"
+        / "_genesis"
+        / "robotic_arm_pickup_pour_honey_rho1400_mu0030_gamma004_fric014_pose084_fillet012_micro360_sdf0025_align0_corrbase_settled.npy"
+    )
 
 
 @dataclass(frozen=True)
@@ -338,6 +407,28 @@ def _quat_inverse_wxyz(q: np.ndarray) -> np.ndarray:
     return np.array([quat[0], -quat[1], -quat[2], -quat[3]], dtype=np.float64) / np.dot(quat, quat)
 
 
+def _quat_slerp_wxyz(q0: np.ndarray, q1: np.ndarray, fraction: float) -> np.ndarray:
+    q0 = np.asarray(q0, dtype=np.float64)
+    q1 = np.asarray(q1, dtype=np.float64)
+    q0 = q0 / np.linalg.norm(q0)
+    q1 = q1 / np.linalg.norm(q1)
+    dot = float(np.dot(q0, q1))
+    if dot < 0.0:
+        q1 = -q1
+        dot = -dot
+    fraction = float(np.clip(fraction, 0.0, 1.0))
+    if dot > 0.9995:
+        quat = q0 + fraction * (q1 - q0)
+        return quat / np.linalg.norm(quat)
+    theta_0 = math.acos(np.clip(dot, -1.0, 1.0))
+    sin_theta_0 = math.sin(theta_0)
+    theta = theta_0 * fraction
+    s0 = math.cos(theta) - dot * math.sin(theta) / sin_theta_0
+    s1 = math.sin(theta) / sin_theta_0
+    quat = s0 * q0 + s1 * q1
+    return quat / np.linalg.norm(quat)
+
+
 def _angular_velocity_between_wxyz(q0: np.ndarray, q1: np.ndarray, dt: float) -> np.ndarray:
     delta = _quat_multiply_wxyz(np.asarray(q1, dtype=np.float64), _quat_inverse_wxyz(np.asarray(q0, dtype=np.float64)))
     if delta[0] < 0.0:
@@ -446,6 +537,18 @@ def _glass_inner_mask(points: np.ndarray, center: np.ndarray, quat_wxyz: np.ndar
     return _glass_inner_mask_scaled(points, center, quat_wxyz, scale=1.0)
 
 
+def _glass_inner_radius_at_z(local_z: np.ndarray | float) -> np.ndarray:
+    local_z = np.asarray(local_z, dtype=np.float64)
+    fillet_r = min(max(GLASS_INNER_FILLET_RADIUS, 0.0), GLASS_INNER_RADIUS - WATER_PARTICLE_SIZE)
+    radius = np.full_like(local_z, GLASS_INNER_RADIUS, dtype=np.float64)
+    if fillet_r > 0.0:
+        corner = (local_z >= GLASS_INNER_FLOOR_Z) & (local_z < GLASS_INNER_FLOOR_Z + fillet_r)
+        dz = local_z[corner] - (GLASS_INNER_FLOOR_Z + fillet_r)
+        radius[corner] = GLASS_INNER_RADIUS - fillet_r + np.sqrt(np.maximum(fillet_r * fillet_r - dz * dz, 0.0))
+        radius = np.where(local_z < GLASS_INNER_FLOOR_Z, GLASS_INNER_RADIUS - fillet_r, radius)
+    return radius
+
+
 def _glass_inner_mask_scaled(
     points: np.ndarray,
     center: np.ndarray,
@@ -455,8 +558,9 @@ def _glass_inner_mask_scaled(
 ) -> np.ndarray:
     local = _inverse_transform_points(center, quat_wxyz, points) / scale
     r_xy = np.linalg.norm(local[:, :2], axis=1)
+    inner_radius = _glass_inner_radius_at_z(local[:, 2])
     return (
-        (r_xy < GLASS_INNER_RADIUS + WATER_PARTICLE_SIZE * 0.75)
+        (r_xy < inner_radius + WATER_PARTICLE_SIZE * 0.75)
         & (local[:, 2] >= GLASS_INNER_FLOOR_Z - 0.001)
         & (local[:, 2] <= GLASS_RIM_Z - WATER_BRIM_CLEARANCE)
     )
@@ -478,11 +582,12 @@ def _glass_solid_mask(
     base_z = -GLASS_HEIGHT * 0.5
     floor_z = GLASS_INNER_FLOOR_Z
     rim_z = GLASS_RIM_Z
+    inner_radius = _glass_inner_radius_at_z(local[:, 2])
 
     side_wall = (
-        (r_xy > GLASS_INNER_RADIUS + tolerance)
+        (r_xy > inner_radius + tolerance)
         & (r_xy < GLASS_OUTER_RADIUS - tolerance)
-        & (local[:, 2] > floor_z + tolerance)
+        & (local[:, 2] > floor_z - tolerance)
         & (local[:, 2] < rim_z - tolerance)
     )
     base = (
@@ -507,8 +612,9 @@ def _glass_base_solid_mask(
     local = _inverse_transform_points(center, quat_wxyz, points) / scale
     r_xy = np.linalg.norm(local[:, :2], axis=1)
     base_z = -GLASS_HEIGHT * 0.5
+    inner_radius = _glass_inner_radius_at_z(local[:, 2])
     return (
-        (r_xy < GLASS_OUTER_RADIUS - tolerance)
+        (r_xy < inner_radius - tolerance)
         & (local[:, 2] > base_z + tolerance)
         & (local[:, 2] < GLASS_INNER_FLOOR_Z - tolerance)
     )
@@ -582,21 +688,28 @@ def glass_overlap_sample_count(
     return int(cup_in_receiver.sum() + receiver_in_cup.sum())
 
 
-def build_glass_mesh(path: Optional[Path] = None) -> Path:
-    """Write one watertight open-top glass mesh for Genesis SDF coupling."""
+def _write_glass_mesh(
+    path: Path,
+    *,
+    inner_radius: float,
+    inner_floor_z: float,
+    fillet_radius: float | None = None,
+) -> Path:
+    """Write one watertight open-top glass mesh."""
     import trimesh
 
-    if path is None:
-        path = GLASS_MESH_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
 
     n = GLASS_MESH_SEGMENTS
     half_h = GLASS_HEIGHT * 0.5
     base_z = -half_h
     rim_z = half_h
-    inner_base_z = base_z + GLASS_BASE_THICKNESS
+    inner_base_z = inner_floor_z
     outer_r = GLASS_OUTER_RADIUS
-    inner_r = GLASS_INNER_RADIUS
+    inner_r = inner_radius
+    if fillet_radius is None:
+        fillet_radius = GLASS_INNER_FILLET_RADIUS
+    fillet_r = min(max(float(fillet_radius), 0.0), inner_r - WATER_PARTICLE_SIZE)
 
     def ring(radius: float, z: float) -> np.ndarray:
         angles = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
@@ -604,13 +717,27 @@ def build_glass_mesh(path: Optional[Path] = None) -> Path:
 
     outer_bot = ring(outer_r, base_z)
     outer_top = ring(outer_r, rim_z)
-    inner_bot = ring(inner_r, inner_base_z)
+    if fillet_r > 0.0:
+        theta = np.linspace(0.0, 0.5 * np.pi, GLASS_FILLET_SEGMENTS + 1)
+        fillet_rings = [
+            ring(inner_r - fillet_r + fillet_r * math.sin(t), inner_base_z + fillet_r * (1.0 - math.cos(t)))
+            for t in theta
+        ]
+        inner_wall_bottom = fillet_rings[-1]
+        inner_floor = fillet_rings[0]
+    else:
+        fillet_rings = []
+        inner_wall_bottom = ring(inner_r, inner_base_z)
+        inner_floor = inner_wall_bottom
     inner_top = ring(inner_r, rim_z)
     outer_base = ring(outer_r, base_z)
-    inner_floor = ring(inner_r, inner_base_z)
 
-    verts = np.concatenate([outer_bot, outer_top, inner_bot, inner_top, outer_base, inner_floor], axis=0)
+    rings = [outer_bot, outer_top, inner_wall_bottom, inner_top, outer_base, inner_floor]
     off_ob, off_ot, off_ib, off_it, off_base, off_floor = 0, n, 2 * n, 3 * n, 4 * n, 5 * n
+    off_fillet = 6 * n
+    if fillet_r > 0.0:
+        rings.extend(fillet_rings[1:-1])
+    verts = np.concatenate(rings, axis=0)
     base_center_idx = verts.shape[0]
     verts = np.concatenate([verts, np.array([[0.0, 0.0, base_z]])], axis=0)
     floor_center_idx = verts.shape[0]
@@ -627,11 +754,29 @@ def build_glass_mesh(path: Optional[Path] = None) -> Path:
         faces.append([off_ot + i, off_ot + j, off_it + j])
         faces.append([base_center_idx, off_base + j, off_base + i])
         faces.append([floor_center_idx, off_floor + i, off_floor + j])
+        if fillet_r > 0.0:
+            fillet_offsets = [off_floor] + [
+                off_fillet + k * n for k in range(GLASS_FILLET_SEGMENTS - 1)
+            ] + [off_ib]
+            for a, b in zip(fillet_offsets[:-1], fillet_offsets[1:]):
+                faces.append([a + i, b + j, a + j])
+                faces.append([a + i, b + i, b + j])
 
     mesh = trimesh.Trimesh(vertices=verts, faces=np.asarray(faces), process=True)
     mesh.fix_normals()
     mesh.export(path)
     return path
+
+
+def build_glass_mesh(path: Optional[Path] = None) -> Path:
+    """Write the watertight cup mesh used for both rendering and Genesis SDF coupling."""
+    if path is None:
+        path = GLASS_MESH_PATH
+    return _write_glass_mesh(
+        path,
+        inner_radius=GLASS_INNER_RADIUS,
+        inner_floor_z=GLASS_INNER_FLOOR_Z,
+    )
 
 
 class RoboticArmPourGenesisDemo:
@@ -652,7 +797,8 @@ class RoboticArmPourGenesisDemo:
 
         self.gs = gs
         self.num_frames = num_frames
-        self.frame_dt = 1.0 / FRAME_RATE
+        self.frame_dt = VIDEO_DT
+        self.physics_dt = PHYSICS_DT
         self.sim_time = 0.0
         self.frame_index = 0
         self.max_tilt_degrees = 0.0
@@ -660,28 +806,33 @@ class RoboticArmPourGenesisDemo:
         self.max_pourer_solid_particles = 0
         self.max_receiver_solid_particles = 0
         self.max_pourer_base_particles = 0
+        self.boundary_correction_count = 0
+        self.max_boundary_projection_depth = 0.0
         self.standard_robot = None
         self.standard_robot_hand = None
         self._standard_robot_last_q = PANDA_HOME_Q.copy()
         cup_pos, cup_quat = initial_glass_pose()
         self.current_cup_pos = cup_pos
         self.current_cup_quat = cup_quat
+        self.current_cup_linear_velocity = np.zeros(3, dtype=np.float64)
+        self.current_cup_angular_velocity = np.zeros(3, dtype=np.float64)
         self.current_cup_tilt = 0.0
 
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(
-                dt=self.frame_dt,
+                dt=self.physics_dt,
                 substeps=SIM_SUBSTEPS,
                 gravity=(0.0, 0.0, -9.81),
             ),
             sph_options=gs.options.SPHOptions(
                 particle_size=WATER_PARTICLE_SIZE,
                 pressure_solver="DFSPH",
+                hash_grid_cell_size=2.0 * WATER_PARTICLE_SIZE,
                 lower_bound=(-0.85, -0.85, -0.2),
                 upper_bound=(1.05, 0.85, 1.15),
             ),
             rigid_options=gs.options.RigidOptions(
-                dt=self.frame_dt,
+                dt=self.physics_dt,
                 gravity=(0.0, 0.0, -9.81),
             ),
             show_viewer=show_viewer,
@@ -704,22 +855,28 @@ class RoboticArmPourGenesisDemo:
 
         self.scene.build()
         self._finish_robot_visuals()
-        self._apply_kinematic_pose(0.0)
+        self._apply_kinematic_pose(0.0, self.physics_dt)
 
         self.initial_cup_pos = self.current_cup_pos.copy()
         self.initial_cup_quat = self.current_cup_quat.copy()
         self.initial_particles = self._particle_positions()
 
-    def _glass_material(self, *, rho: float = 650.0, gravity_compensation: float = 0.0):
+    def _glass_material(
+        self,
+        *,
+        rho: float = 650.0,
+        gravity_compensation: float = 0.0,
+        coup_softness: float = GLASS_COUP_SOFTNESS,
+    ):
         gs = self.gs
         return gs.materials.Rigid(
             rho=rho,
-            coup_softness=0.0,
-            coup_friction=1.0,
+            coup_softness=coup_softness,
+            coup_friction=GLASS_COUP_FRICTION,
             coup_restitution=0.0,
-            sdf_cell_size=0.003,
-            sdf_min_res=48,
-            sdf_max_res=192,
+            sdf_cell_size=GLASS_SDF_CELL_SIZE,
+            sdf_min_res=GLASS_SDF_MIN_RES,
+            sdf_max_res=GLASS_SDF_MAX_RES,
             gravity_compensation=gravity_compensation,
         )
 
@@ -754,6 +911,7 @@ class RoboticArmPourGenesisDemo:
                 fixed=False,
                 decimate=False,
                 convexify=False,
+                align=False,
             ),
             surface=glass_surface,
         )
@@ -779,6 +937,7 @@ class RoboticArmPourGenesisDemo:
                 batch_fixed_verts=True,
                 decimate=False,
                 convexify=False,
+                align=False,
             ),
             surface=glass_surface,
         )
@@ -818,13 +977,17 @@ class RoboticArmPourGenesisDemo:
         water_center = pickup_pos + np.array([0.0, 0.0, cylinder_center_local_z], dtype=np.float64)
 
         self.water = self.scene.add_entity(
-            material=gs.materials.SPH.Liquid(rho=WATER_DENSITY, mu=WATER_VISCOSITY),
+            material=gs.materials.SPH.Liquid(
+                rho=WATER_DENSITY,
+                mu=WATER_VISCOSITY,
+                gamma=LIQUID_SURFACE_TENSION,
+            ),
             morph=gs.morphs.Cylinder(
                 pos=tuple(water_center),
                 radius=cylinder_radius,
                 height=emission_height,
             ),
-            surface=gs.surfaces.Default(color=(0.25, 0.55, 0.95, 1.0), vis_mode="particle"),
+            surface=gs.surfaces.Default(color=LIQUID_COLOR, vis_mode=LIQUID_VIS_MODE),
         )
 
     def _set_pouring_glass_pose(
@@ -834,12 +997,21 @@ class RoboticArmPourGenesisDemo:
         linear_velocity: np.ndarray,
         angular_velocity: np.ndarray,
     ) -> None:
-        self.pouring_glass.set_pos(pos.astype(np.float32), zero_velocity=False, relative=False, skip_forward=True)
-        self.pouring_glass.set_quat(quat.astype(np.float32), zero_velocity=False, relative=False)
+        pos = np.asarray(pos, dtype=np.float64)
+        quat = np.asarray(quat, dtype=np.float64)
+        linear_velocity = np.asarray(linear_velocity, dtype=np.float64)
+        angular_velocity = np.asarray(angular_velocity, dtype=np.float64)
+        qpos = np.concatenate([pos, quat]).astype(np.float32)
+        qvel = np.concatenate([linear_velocity, angular_velocity]).astype(np.float32)
+        self.pouring_glass.set_qpos(qpos, zero_velocity=False, skip_forward=True)
         self.pouring_glass.set_dofs_velocity(
-            np.concatenate([linear_velocity, angular_velocity]).astype(np.float32),
+            qvel,
             skip_forward=False,
         )
+        self.current_cup_pos = pos.copy()
+        self.current_cup_quat = quat.copy()
+        self.current_cup_linear_velocity = linear_velocity.copy()
+        self.current_cup_angular_velocity = angular_velocity.copy()
 
     def _set_handle_pose(self, cup_pos: np.ndarray, cup_quat: np.ndarray) -> None:
         handle_pos = _transform_local(cup_pos, cup_quat, HANDLE_LOCAL_POS)
@@ -852,24 +1024,45 @@ class RoboticArmPourGenesisDemo:
         tcp_pos = _transform_local(hand_pos, hand_quat, PANDA_TCP_LOCAL_POINT)
         return tcp_pos, hand_quat
 
+    def _standard_robot_grasp_pose_at(
+        self,
+        time_seconds: float,
+        *,
+        velocity_dt: float | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        q_current = standard_robot_q_at(time_seconds)
+        self.standard_robot.set_dofs_position(q_current, zero_velocity=False)
+        if velocity_dt is not None:
+            q_next = standard_robot_q_at(time_seconds + velocity_dt)
+            self.standard_robot.set_dofs_velocity((q_next - q_current) / velocity_dt)
+        self._standard_robot_last_q = q_current.copy()
+        return self._actual_standard_robot_grasp_pose()
+
+    def _cup_pose_at(
+        self,
+        time_seconds: float,
+        *,
+        velocity_dt: float | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        tcp_pos, hand_quat = self._standard_robot_grasp_pose_at(time_seconds, velocity_dt=velocity_dt)
+        return _cup_pose_from_grasp_tcp(tcp_pos, hand_quat)
+
     def _set_standard_robot_pose(
         self,
         time_seconds: float,
+        dt: float | None = None,
     ) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
-        q_current = standard_robot_q_at(time_seconds)
-        q_next = standard_robot_q_at(time_seconds + self.frame_dt)
-
-        self.standard_robot.set_dofs_position(q_current, zero_velocity=False)
-        current_grasp_pose = self._actual_standard_robot_grasp_pose()
-        self.standard_robot.set_dofs_position(q_next, zero_velocity=False)
-        next_grasp_pose = self._actual_standard_robot_grasp_pose()
-        self.standard_robot.set_dofs_position(q_current, zero_velocity=False)
-        self.standard_robot.set_dofs_velocity((q_next - q_current) / self.frame_dt)
-        self._standard_robot_last_q = q_current.copy()
+        if dt is None:
+            dt = self.frame_dt
+        current_grasp_pose = self._standard_robot_grasp_pose_at(time_seconds, velocity_dt=dt)
+        next_grasp_pose = self._standard_robot_grasp_pose_at(time_seconds + dt)
+        self._standard_robot_grasp_pose_at(time_seconds, velocity_dt=dt)
         return current_grasp_pose, next_grasp_pose
 
-    def _apply_kinematic_pose(self, time_seconds: float) -> None:
-        (tcp_pos, hand_quat), (next_tcp_pos, next_hand_quat) = self._set_standard_robot_pose(time_seconds)
+    def _apply_kinematic_pose(self, time_seconds: float, dt: float | None = None) -> None:
+        if dt is None:
+            dt = self.frame_dt
+        (tcp_pos, hand_quat), (next_tcp_pos, next_hand_quat) = self._set_standard_robot_pose(time_seconds, dt)
         cup_pos, cup_quat = _cup_pose_from_grasp_tcp(tcp_pos, hand_quat)
         next_cup_pos, next_cup_quat = _cup_pose_from_grasp_tcp(next_tcp_pos, next_hand_quat)
         # The glass pose is the fixed handle grasp transform from the actual
@@ -881,20 +1074,98 @@ class RoboticArmPourGenesisDemo:
         self._set_pouring_glass_pose(
             cup_pos,
             cup_quat,
-            (next_cup_pos - cup_pos) / self.frame_dt,
-            _angular_velocity_between_wxyz(cup_quat, next_cup_quat, self.frame_dt),
+            (next_cup_pos - cup_pos) / dt,
+            _angular_velocity_between_wxyz(cup_quat, next_cup_quat, dt),
         )
         self._set_handle_pose(cup_pos, cup_quat)
         rotation = _quat_to_matrix_wxyz(cup_quat)
         cup_axis_z = float(np.clip(rotation[2, 2], -1.0, 1.0))
         actual_tilt = math.degrees(math.acos(cup_axis_z))
         self.max_tilt_degrees = max(self.max_tilt_degrees, abs(actual_tilt))
-        self.current_cup_pos = cup_pos.copy()
-        self.current_cup_quat = cup_quat.copy()
         self.current_cup_tilt = actual_tilt
+
+    def _interpolated_cup_pose(
+        self,
+        start_pos: np.ndarray,
+        start_quat: np.ndarray,
+        end_pos: np.ndarray,
+        end_quat: np.ndarray,
+        fraction: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        fraction = float(np.clip(fraction, 0.0, 1.0))
+        pos = start_pos + (end_pos - start_pos) * fraction
+        quat = _quat_slerp_wxyz(start_quat, end_quat, fraction)
+        return pos, quat
 
     def _particle_positions(self) -> np.ndarray:
         return self.water.get_particles_pos().cpu().numpy().copy()
+
+    def _particle_velocities(self) -> np.ndarray:
+        return self.water.get_particles_vel().cpu().numpy().copy()
+
+    def _correct_source_wall_particles(self) -> int:
+        """Project missed source-cup wall contacts back into the rounded cavity."""
+        positions = self._particle_positions()
+        live_indices = np.flatnonzero(positions[:, 2] > -1.0)
+        if live_indices.size == 0:
+            return 0
+
+        velocities = self._particle_velocities()
+        rotation = _quat_to_matrix_wxyz(self.current_cup_quat)
+        local = (positions[live_indices] - self.current_cup_pos) @ rotation
+        local_z = local[:, 2]
+        radial = np.linalg.norm(local[:, :2], axis=1)
+        inner_radius = _glass_inner_radius_at_z(local_z)
+
+        side_wall = (
+            (local_z >= GLASS_INNER_FLOOR_Z - 0.25 * WATER_PARTICLE_SIZE)
+            & (local_z < GLASS_RIM_Z - SOURCE_WALL_CORRECTION_RIM_CLEARANCE)
+            & (radial > inner_radius)
+            & (radial < GLASS_OUTER_RADIUS + SOURCE_WALL_CORRECTION_OUTER_MARGIN)
+        )
+        base = (
+            (local_z < GLASS_INNER_FLOOR_Z + SOURCE_BASE_CORRECTION_CLEARANCE)
+            & (local_z > -0.5 * GLASS_HEIGHT - 0.5 * WATER_PARTICLE_SIZE)
+            & (radial < inner_radius)
+        )
+        changed = side_wall | base
+        if not changed.any():
+            return 0
+
+        local_normals = np.zeros_like(local)
+        projection_depth = np.zeros(live_indices.size, dtype=np.float64)
+        if side_wall.any():
+            side_indices = np.flatnonzero(side_wall)
+            local_normals[side_indices, :2] = local[side_indices, :2] / np.maximum(radial[side_indices, None], 1.0e-9)
+            target_radius = inner_radius[side_indices] - SOURCE_WALL_CORRECTION_CLEARANCE
+            projection_depth[side_indices] = radial[side_indices] - target_radius
+            local[side_indices, :2] = local_normals[side_indices, :2] * target_radius[:, None]
+
+        if base.any():
+            base_indices = np.flatnonzero(base)
+            local_normals[base_indices, 2] = -1.0
+            target_z = GLASS_INNER_FLOOR_Z + SOURCE_BASE_CORRECTION_CLEARANCE
+            projection_depth[base_indices] = target_z - local[base_indices, 2]
+            local[base_indices, 2] = target_z
+
+        changed_indices = live_indices[changed]
+        positions[changed_indices] = self.current_cup_pos + local[changed] @ rotation.T
+        normals_world = local_normals[changed] @ rotation.T
+        rel_points = positions[changed_indices] - self.current_cup_pos
+        wall_velocity = self.current_cup_linear_velocity + np.cross(self.current_cup_angular_velocity, rel_points)
+        relative_velocity = velocities[changed_indices] - wall_velocity
+        outward_speed = np.sum(relative_velocity * normals_world, axis=1)
+        relative_velocity -= normals_world * np.maximum(outward_speed, 0.0)[:, None]
+        velocities[changed_indices] = wall_velocity + relative_velocity
+        self.water.set_particles_pos(positions.astype(np.float32))
+        self.water.set_particles_vel(velocities.astype(np.float32))
+        if changed_indices.size:
+            self.boundary_correction_count += int(changed_indices.size)
+            self.max_boundary_projection_depth = max(
+                self.max_boundary_projection_depth,
+                float(projection_depth[changed].max(initial=0.0)),
+            )
+        return int(changed.sum())
 
     def _count_glass_solid_particles_by_glass(self, positions: np.ndarray, time_seconds: float) -> tuple[int, int]:
         del time_seconds
@@ -919,11 +1190,39 @@ class RoboticArmPourGenesisDemo:
         return int(_glass_base_solid_mask(live, self.current_cup_pos, self.current_cup_quat).sum())
 
     def step(self) -> None:
-        self._apply_kinematic_pose(self.sim_time)
-        self.scene.step()
-        next_time = self.sim_time + self.frame_dt
-        self._apply_kinematic_pose(next_time)
-        self.sim_time = next_time
+        frame_start_time = self.sim_time
+        start_pos, start_quat = self._cup_pose_at(frame_start_time)
+        end_pos, end_quat = self._cup_pose_at(frame_start_time + self.frame_dt)
+        for microstep in range(MICROSTEPS_PER_FRAME):
+            alpha = microstep / MICROSTEPS_PER_FRAME
+            next_alpha = (microstep + 1) / MICROSTEPS_PER_FRAME
+            cup_pos, cup_quat = self._interpolated_cup_pose(start_pos, start_quat, end_pos, end_quat, alpha)
+            next_cup_pos, next_cup_quat = self._interpolated_cup_pose(
+                start_pos,
+                start_quat,
+                end_pos,
+                end_quat,
+                next_alpha,
+            )
+            self._set_pouring_glass_pose(
+                cup_pos,
+                cup_quat,
+                (next_cup_pos - cup_pos) / self.physics_dt,
+                _angular_velocity_between_wxyz(cup_quat, next_cup_quat, self.physics_dt),
+            )
+            self.scene.step()
+            should_correct = (
+                ENABLE_SOURCE_BOUNDARY_CORRECTION
+                and (
+                    (microstep + 1) % SOURCE_BOUNDARY_CORRECTION_INTERVAL == 0
+                    or microstep == MICROSTEPS_PER_FRAME - 1
+                )
+            )
+            if should_correct:
+                self._correct_source_wall_particles()
+            self.sim_time += self.physics_dt
+
+        self._apply_kinematic_pose(self.sim_time, self.physics_dt)
         self.frame_index += 1
         positions = self._particle_positions()
         self.max_pourer_base_particles = max(
@@ -943,10 +1242,21 @@ class RoboticArmPourGenesisDemo:
             )
 
     def pre_settle(self, seconds: float = SETTLE_BAKE_SECONDS) -> None:
-        for _ in range(int(round(seconds * FRAME_RATE))):
-            self._apply_kinematic_pose(0.0)
+        for step_index in range(int(round(seconds / self.physics_dt))):
+            self._apply_kinematic_pose(0.0, self.physics_dt)
             self.scene.step()
-        self._apply_kinematic_pose(0.0)
+            should_correct = (
+                ENABLE_SOURCE_BOUNDARY_CORRECTION
+                and (
+                    (step_index + 1) % SOURCE_BOUNDARY_CORRECTION_INTERVAL == 0
+                    or step_index == int(round(seconds / self.physics_dt)) - 1
+                )
+            )
+            if should_correct:
+                self._correct_source_wall_particles()
+        self._apply_kinematic_pose(0.0, self.physics_dt)
+        if ENABLE_SOURCE_BOUNDARY_CORRECTION:
+            self._correct_source_wall_particles()
 
     def trim_overflow_particles(self) -> None:
         positions = self._particle_positions()
@@ -967,6 +1277,9 @@ class RoboticArmPourGenesisDemo:
             return False
         self.water.set_particles_pos(settled)
         self.water.set_particles_vel(np.zeros_like(settled))
+        if ENABLE_SOURCE_BOUNDARY_CORRECTION:
+            self._correct_source_wall_particles()
+        settled = self._particle_positions()
         self.initial_particles = settled.copy()
         return True
 

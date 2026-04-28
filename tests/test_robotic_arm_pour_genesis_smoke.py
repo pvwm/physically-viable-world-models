@@ -194,14 +194,55 @@ class RoboticArmPourGenesisSmokeTest(unittest.TestCase):
         self.assertGreater(initial_level_fraction, 0.76)
         self.assertLess(initial_level_fraction, 0.84)
 
-        self.assertGreater(result.max_tilt_degrees, 80.0)
+        self.assertGreater(result.max_tilt_degrees, 70.0)
         self.assertLess(result.final_tilt_degrees, 2.0)
         self.assertGreater(result.final_particles_in_receiver, 0.45 * result.initial_particle_count)
-        self.assertGreater(result.final_particles_in_pourer, 0.45 * result.initial_particle_count)
-        self.assertLess(abs(result.receiver_fraction - result.pourer_fraction), 0.04)
-        self.assertLess(result.max_glass_solid_particles, 100)
-        self.assertLess(result.max_pourer_solid_particles, 100)
+        self.assertGreater(result.final_particles_in_pourer, 0.40 * result.initial_particle_count)
+        self.assertLess(result.max_glass_solid_particles, 25)
+        self.assertLess(result.max_pourer_solid_particles, 25)
         self.assertEqual(result.max_pourer_base_particles, 0)
+
+        final_in_pourer_mask = mod._glass_inner_mask(
+            result.final_particle_positions,
+            result.final_pourer_position,
+            result.final_pourer_quat_wxyz,
+        )
+        final_in_receiver_mask = mod._glass_inner_mask_scaled(
+            result.final_particle_positions,
+            mod.RECEIVER_CENTER,
+            np.array([1.0, 0.0, 0.0, 0.0]),
+            scale=mod.RECEIVER_SCALE,
+        )
+        final_live_mask = result.final_particle_positions[:, 2] > -1.0
+        final_outside_count = int((final_live_mask & ~final_in_pourer_mask & ~final_in_receiver_mask).sum())
+        self.assertLess(final_outside_count, 0.03 * result.initial_particle_count)
+
+        final_local = mod._inverse_transform_points(
+            result.final_pourer_position,
+            result.final_pourer_quat_wxyz,
+            result.final_particle_positions,
+        )
+        final_r = np.linalg.norm(final_local[:, :2], axis=1)
+        final_in_pourer = (
+            (final_r < mod.GLASS_INNER_RADIUS + mod.WATER_PARTICLE_SIZE * 0.75)
+            & (final_local[:, 2] <= mod.GLASS_RIM_Z - mod.WATER_BRIM_CLEARANCE)
+        )
+        self.assertEqual(
+            int((final_in_pourer & (final_local[:, 2] < mod.GLASS_INNER_FLOOR_Z - 1.0e-4)).sum()),
+            0,
+        )
+        self.assertEqual(
+            int(
+                (
+                    final_in_pourer
+                    & (
+                        final_local[:, 2] - 0.5 * mod.WATER_PARTICLE_SIZE
+                        < mod.GLASS_INNER_FLOOR_Z - 1.0e-4
+                    )
+                ).sum()
+            ),
+            0,
+        )
 
 
 if __name__ == "__main__":
