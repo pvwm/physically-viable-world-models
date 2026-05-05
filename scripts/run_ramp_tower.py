@@ -10,6 +10,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from npm_sim.materials import MATERIALS
+from npm_sim.ramp_tower import DOMINO_FLIP_CAMERA_FOV
+from npm_sim.ramp_tower import DOMINO_FLIP_CAMERA_PITCH
+from npm_sim.ramp_tower import DOMINO_FLIP_CAMERA_POS
+from npm_sim.ramp_tower import DOMINO_FLIP_CAMERA_YAW
+from npm_sim.ramp_tower import DOMINO_FLIP_RAMP_LENGTH
+from npm_sim.ramp_tower import RAMP_LENGTH
 from npm_sim.ramp_tower import run_simulation as run_jelly_simulation
 from npm_sim.rigid_ramp_cup import run_simulation as run_rigid_cup_simulation
 from npm_sim.rigid_ramp_tower import run_simulation as run_rigid_simulation
@@ -21,6 +27,26 @@ JELLY_VARIANT_WALL_COUNTS = {
     "jelly": 2,
     "jelly-single": 1,
     "jelly-domino": 2,
+    "jelly-domino-flip": 2,
+}
+
+JELLY_VARIANT_RAMP_LENGTHS = {
+    "jelly": RAMP_LENGTH,
+    "jelly-single": RAMP_LENGTH,
+    "jelly-domino": RAMP_LENGTH,
+    "jelly-domino-flip": DOMINO_FLIP_RAMP_LENGTH,
+}
+
+JELLY_VARIANT_CAMERA_ARGS = {
+    "jelly": {},
+    "jelly-single": {},
+    "jelly-domino": {},
+    "jelly-domino-flip": {
+        "camera_pos": DOMINO_FLIP_CAMERA_POS,
+        "camera_pitch": DOMINO_FLIP_CAMERA_PITCH,
+        "camera_yaw": DOMINO_FLIP_CAMERA_YAW,
+        "camera_fov": DOMINO_FLIP_CAMERA_FOV,
+    },
 }
 
 
@@ -30,7 +56,15 @@ def create_parser() -> argparse.ArgumentParser:
         "--variant",
         type=str,
         default="jelly-domino",
-        choices=["jelly", "jelly-single", "jelly-domino", "rigid", "rigid-cup", "roboarm-wall"],
+        choices=[
+            "jelly",
+            "jelly-single",
+            "jelly-domino",
+            "jelly-domino-flip",
+            "rigid",
+            "rigid-cup",
+            "roboarm-wall",
+        ],
         help="Simulation variant.",
     )
     parser.add_argument(
@@ -46,6 +80,13 @@ def create_parser() -> argparse.ArgumentParser:
         default="wood",
         choices=sorted(MATERIALS),
         help="Material preset for the target and static ground surfaces.",
+    )
+    parser.add_argument(
+        "--target-material",
+        type=str,
+        default=None,
+        choices=sorted(MATERIALS),
+        help="Optional material preset for the rigid tower target only. Defaults to --cube-material.",
     )
     parser.add_argument(
         "--viewer",
@@ -97,11 +138,14 @@ def main(argv: list[str] | None = None):
         parser.error("--num-frames must be positive")
     if args.viewer == "usd" and args.output_path is None:
         parser.error("--output-path is required when using --viewer usd")
+    if args.target_material is not None and args.variant != "rigid":
+        parser.error("--target-material is only supported with --variant rigid")
 
     if args.variant == "rigid":
         return run_rigid_simulation(
             ball_material=args.ball_material,
             cube_material=args.cube_material,
+            target_material=args.target_material,
             viewer=args.viewer,
             num_frames=args.num_frames,
             output_path=args.output_path,
@@ -143,6 +187,8 @@ def main(argv: list[str] | None = None):
         num_frames=args.num_frames,
         output_path=args.output_path,
         device=args.device,
+        ramp_length=JELLY_VARIANT_RAMP_LENGTHS[args.variant],
+        **JELLY_VARIANT_CAMERA_ARGS[args.variant],
     )
 
 

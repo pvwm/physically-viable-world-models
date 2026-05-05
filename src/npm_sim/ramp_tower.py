@@ -30,6 +30,7 @@ RAMP_ANGLE_DEG = 20.0
 RAMP_LENGTH = 1.25
 RAMP_WIDTH = 0.45
 RAMP_THICKNESS = 0.08
+DOMINO_FLIP_RAMP_LENGTH = 4.25
 
 FLOOR_LENGTH = 4.00
 FLOOR_WIDTH = 2.00
@@ -75,14 +76,23 @@ CAMERA_POS = wp.vec3(2.10, -1.40, 0.92)
 CAMERA_PITCH = -13.0
 CAMERA_YAW = 142.0
 CAMERA_FOV = 55.0
+DOMINO_FLIP_CAMERA_POS = wp.vec3(3.20, -4.40, 2.10)
+DOMINO_FLIP_CAMERA_PITCH = -20.0
+DOMINO_FLIP_CAMERA_YAW = 126.0
+DOMINO_FLIP_CAMERA_FOV = 65.0
 
 VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
 VIDEO_NUM_FRAMES = FRAME_RATE * 3
+DOMINO_FLIP_VIDEO_NUM_FRAMES = FRAME_RATE * 4
 VIDEO_CROP_X = 150
 VIDEO_CROP_Y = 230
 VIDEO_CROP_WIDTH = 940
 VIDEO_CROP_HEIGHT = 529
+DOMINO_FLIP_VIDEO_CROP_X = 0
+DOMINO_FLIP_VIDEO_CROP_Y = 0
+DOMINO_FLIP_VIDEO_CROP_WIDTH = VIDEO_WIDTH
+DOMINO_FLIP_VIDEO_CROP_HEIGHT = VIDEO_HEIGHT
 
 RAMP_COLOR = wp.vec3(0.32, 0.35, 0.39)
 FLOOR_COLOR = wp.vec3(0.55, 0.58, 0.62)
@@ -256,6 +266,13 @@ class RampTowerDemo:
         ball_material: str = "steel",
         cube_material: str = "wood",
         wall_count: int = DEFAULT_WALL_COUNT,
+        ramp_length: float = RAMP_LENGTH,
+        ramp_angle_deg: float = RAMP_ANGLE_DEG,
+        ramp_height_offset: float = 0.0,
+        camera_pos: wp.vec3 | None = None,
+        camera_pitch: float = CAMERA_PITCH,
+        camera_yaw: float = CAMERA_YAW,
+        camera_fov: float = CAMERA_FOV,
     ):
         if wall_count not in (SINGLE_WALL_COUNT, DOMINO_WALL_COUNT):
             raise ValueError("wall_count must be 1 or 2")
@@ -266,6 +283,8 @@ class RampTowerDemo:
         self.sim_time = 0.0
         self.sim_substeps = SIM_SUBSTEPS
         self.sim_dt = self.frame_dt / self.sim_substeps
+        self.ramp_angle_deg = ramp_angle_deg
+        self.ramp_height_offset = ramp_height_offset
 
         ball_preset = MATERIALS[ball_material]
         cube_preset = MATERIALS[cube_material]
@@ -273,8 +292,8 @@ class RampTowerDemo:
         builder = newton.ModelBuilder()
         builder.rigid_gap = RIGID_GAP
 
-        ramp_angle = math.radians(RAMP_ANGLE_DEG)
-        ramp_half_length = RAMP_LENGTH * 0.5
+        ramp_angle = math.radians(ramp_angle_deg)
+        ramp_half_length = ramp_length * 0.5
         ramp_half_thickness = RAMP_THICKNESS * 0.5
         floor_half_length = FLOOR_LENGTH * 0.5
         floor_half_thickness = FLOOR_THICKNESS * 0.5
@@ -282,9 +301,9 @@ class RampTowerDemo:
         ramp_center = wp.vec3(
             0.0,
             -ramp_half_length * math.cos(ramp_angle) - ramp_half_thickness * math.sin(ramp_angle),
-            ramp_half_length * math.sin(ramp_angle) - ramp_half_thickness * math.cos(ramp_angle),
+            ramp_half_length * math.sin(ramp_angle) - ramp_half_thickness * math.cos(ramp_angle) + ramp_height_offset,
         )
-        ramp_xform = wp.transform(p=ramp_center, q=_quat_x(-RAMP_ANGLE_DEG))
+        ramp_xform = wp.transform(p=ramp_center, q=_quat_x(-ramp_angle_deg))
         floor_xform = wp.transform(
             p=wp.vec3(0.0, floor_half_length - FLOOR_RAMP_OVERLAP, floor_top_z - floor_half_thickness),
             q=wp.quat_identity(),
@@ -399,9 +418,11 @@ class RampTowerDemo:
         self.contacts = self.model.contacts()
 
         self.viewer.set_model(self.model)
-        self.viewer.set_camera(pos=CAMERA_POS, pitch=CAMERA_PITCH, yaw=CAMERA_YAW)
+        if camera_pos is None:
+            camera_pos = CAMERA_POS
+        self.viewer.set_camera(pos=camera_pos, pitch=camera_pitch, yaw=camera_yaw)
         if hasattr(self.viewer, "camera") and hasattr(self.viewer.camera, "fov"):
-            self.viewer.camera.fov = CAMERA_FOV
+            self.viewer.camera.fov = camera_fov
 
         self.initial_particle_positions = self.particle_positions()
         self.capture()
@@ -469,6 +490,13 @@ def build_scene(
     num_frames: int = 240,
     output_path: str | None = None,
     device: str | None = None,
+    ramp_length: float = RAMP_LENGTH,
+    ramp_angle_deg: float = RAMP_ANGLE_DEG,
+    ramp_height_offset: float = 0.0,
+    camera_pos: wp.vec3 | None = None,
+    camera_pitch: float = CAMERA_PITCH,
+    camera_yaw: float = CAMERA_YAW,
+    camera_fov: float = CAMERA_FOV,
 ) -> RampTowerDemo:
     if device:
         wp.set_device(device)
@@ -483,6 +511,13 @@ def build_scene(
         ball_material=ball_material,
         cube_material=cube_material,
         wall_count=wall_count,
+        ramp_length=ramp_length,
+        ramp_angle_deg=ramp_angle_deg,
+        ramp_height_offset=ramp_height_offset,
+        camera_pos=camera_pos,
+        camera_pitch=camera_pitch,
+        camera_yaw=camera_yaw,
+        camera_fov=camera_fov,
     )
 
 
@@ -495,6 +530,13 @@ def run_simulation(
     num_frames: int = 240,
     output_path: str | None = None,
     device: str | None = None,
+    ramp_length: float = RAMP_LENGTH,
+    ramp_angle_deg: float = RAMP_ANGLE_DEG,
+    ramp_height_offset: float = 0.0,
+    camera_pos: wp.vec3 | None = None,
+    camera_pitch: float = CAMERA_PITCH,
+    camera_yaw: float = CAMERA_YAW,
+    camera_fov: float = CAMERA_FOV,
 ) -> SimulationResult:
     demo = build_scene(
         ball_material=ball_material,
@@ -504,6 +546,13 @@ def run_simulation(
         num_frames=num_frames,
         output_path=output_path,
         device=device,
+        ramp_length=ramp_length,
+        ramp_angle_deg=ramp_angle_deg,
+        ramp_height_offset=ramp_height_offset,
+        camera_pos=camera_pos,
+        camera_pitch=camera_pitch,
+        camera_yaw=camera_yaw,
+        camera_fov=camera_fov,
     )
 
     try:
@@ -524,6 +573,17 @@ def render_video(
     wall_count: int = DEFAULT_WALL_COUNT,
     num_frames: int = VIDEO_NUM_FRAMES,
     device: str | None = None,
+    ramp_length: float = RAMP_LENGTH,
+    ramp_angle_deg: float = RAMP_ANGLE_DEG,
+    ramp_height_offset: float = 0.0,
+    camera_pos: wp.vec3 | None = None,
+    camera_pitch: float = CAMERA_PITCH,
+    camera_yaw: float = CAMERA_YAW,
+    camera_fov: float = CAMERA_FOV,
+    video_crop_x: int = VIDEO_CROP_X,
+    video_crop_y: int = VIDEO_CROP_Y,
+    video_crop_width: int = VIDEO_CROP_WIDTH,
+    video_crop_height: int = VIDEO_CROP_HEIGHT,
 ) -> Path:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
@@ -542,6 +602,13 @@ def render_video(
         num_frames=num_frames,
         output_path=None,
         device=device,
+        ramp_length=ramp_length,
+        ramp_angle_deg=ramp_angle_deg,
+        ramp_height_offset=ramp_height_offset,
+        camera_pos=camera_pos,
+        camera_pitch=camera_pitch,
+        camera_yaw=camera_yaw,
+        camera_fov=camera_fov,
     )
 
     command = [
@@ -562,7 +629,7 @@ def render_video(
         "-an",
         "-vf",
         (
-            f"crop={VIDEO_CROP_WIDTH}:{VIDEO_CROP_HEIGHT}:{VIDEO_CROP_X}:{VIDEO_CROP_Y},"
+            f"crop={video_crop_width}:{video_crop_height}:{video_crop_x}:{video_crop_y},"
             f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:flags=lanczos"
         ),
         "-vcodec",

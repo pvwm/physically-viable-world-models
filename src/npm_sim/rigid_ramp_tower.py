@@ -140,7 +140,13 @@ def _build_viewer(viewer: str, num_frames: int, output_path: str | None) -> Any:
 
 
 class RampTowerDemo:
-    def __init__(self, viewer: Any, ball_material: str = "steel", cube_material: str = "wood"):
+    def __init__(
+        self,
+        viewer: Any,
+        ball_material: str = "steel",
+        cube_material: str = "wood",
+        target_material: str | None = None,
+    ):
         self.viewer = viewer
         self.fps = FRAME_RATE
         self.frame_dt = 1.0 / self.fps
@@ -150,15 +156,22 @@ class RampTowerDemo:
 
         ball_preset = MATERIALS[ball_material]
         cube_preset = MATERIALS[cube_material]
-        superball_scene = ball_material == "superball" and cube_material == "superball"
-        if superball_scene:
+        target_material = cube_material if target_material is None else target_material
+        target_preset = MATERIALS[target_material]
+        superball_ground_scene = ball_material == "superball" and cube_material == "superball"
+        if superball_ground_scene:
             ball_cfg = _superball_shape_cfg(ball_preset, dynamic=True)
-            cube_cfg = _superball_shape_cfg(cube_preset, dynamic=True)
             ground_cfg = _superball_shape_cfg(GROUND_SUPERBALL_BOUNCY, dynamic=False)
+            top_target_cfg = _superball_shape_cfg(cube_preset, dynamic=True)
         else:
             ball_cfg = _shape_cfg(ball_preset)
-            cube_cfg = _shape_cfg(cube_preset)
             ground_cfg = _static_shape_cfg(cube_preset)
+            top_target_cfg = _shape_cfg(target_preset)
+        target_cfg = (
+            _superball_shape_cfg(target_preset, dynamic=True)
+            if superball_ground_scene and target_material == "superball"
+            else _shape_cfg(target_preset)
+        )
 
         builder = newton.ModelBuilder()
         builder.rigid_gap = RIGID_GAP
@@ -223,7 +236,7 @@ class RampTowerDemo:
 
         tower_base_z = floor_top_z + cube_half
         self.cube_body_indices: list[int] = []
-        if superball_scene:
+        if superball_ground_scene:
             sphere_radius = cube_half
             target_positions = (
                 wp.vec3(-cube_half, TOWER_CENTER_Y, tower_base_z),
@@ -237,7 +250,7 @@ class RampTowerDemo:
                     hx=cube_half,
                     hy=cube_half,
                     hz=cube_half,
-                    cfg=cube_cfg,
+                    cfg=target_cfg,
                     color=CUBE_COLOR,
                     label=f"{label}_shape",
                 )
@@ -253,7 +266,7 @@ class RampTowerDemo:
             builder.add_shape_sphere(
                 top_sphere_body,
                 radius=sphere_radius,
-                cfg=cube_cfg,
+                cfg=top_target_cfg,
                 color=CUBE_COLOR,
                 label="target_top_sphere_shape",
             )
@@ -278,7 +291,7 @@ class RampTowerDemo:
                     hx=cube_half,
                     hy=cube_half,
                     hz=cube_half,
-                    cfg=cube_cfg,
+                    cfg=target_cfg,
                     color=CUBE_COLOR,
                     label=f"{label}_shape",
                 )
@@ -356,6 +369,7 @@ def build_scene(
     *,
     ball_material: str = "steel",
     cube_material: str = "wood",
+    target_material: str | None = None,
     viewer: str | Any = "null",
     num_frames: int = 240,
     output_path: str | None = None,
@@ -373,6 +387,7 @@ def build_scene(
         viewer=viewer_obj,
         ball_material=ball_material,
         cube_material=cube_material,
+        target_material=target_material,
     )
 
 
@@ -380,6 +395,7 @@ def run_simulation(
     *,
     ball_material: str = "steel",
     cube_material: str = "wood",
+    target_material: str | None = None,
     viewer: str = "null",
     num_frames: int = 240,
     output_path: str | None = None,
@@ -388,6 +404,7 @@ def run_simulation(
     demo = build_scene(
         ball_material=ball_material,
         cube_material=cube_material,
+        target_material=target_material,
         viewer=viewer,
         num_frames=num_frames,
         output_path=output_path,
@@ -409,6 +426,7 @@ def render_video(
     output_path: str = "outputs/ramp_tower_rigid.mp4",
     ball_material: str = "steel",
     cube_material: str = "wood",
+    target_material: str | None = None,
     num_frames: int = VIDEO_NUM_FRAMES,
     device: str | None = None,
 ) -> Path:
@@ -424,6 +442,7 @@ def render_video(
     demo = build_scene(
         ball_material=ball_material,
         cube_material=cube_material,
+        target_material=target_material,
         viewer=viewer,
         num_frames=num_frames,
         output_path=None,
@@ -508,6 +527,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="Material preset for the cubes and static ground surfaces.",
     )
     parser.add_argument(
+        "--target-material",
+        type=str,
+        default=None,
+        choices=sorted(MATERIALS),
+        help="Optional material preset for tower cubes only. In the superball tower, the top sphere stays superball.",
+    )
+    parser.add_argument(
         "--viewer",
         type=str,
         default="gl",
@@ -547,6 +573,7 @@ def main(argv: list[str] | None = None) -> SimulationResult:
     return run_simulation(
         ball_material=args.ball_material,
         cube_material=args.cube_material,
+        target_material=args.target_material,
         viewer=args.viewer,
         num_frames=args.num_frames,
         output_path=args.output_path,

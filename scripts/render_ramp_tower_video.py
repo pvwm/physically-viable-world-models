@@ -10,6 +10,17 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from npm_sim.materials import MATERIALS
+from npm_sim.ramp_tower import DOMINO_FLIP_CAMERA_FOV
+from npm_sim.ramp_tower import DOMINO_FLIP_CAMERA_PITCH
+from npm_sim.ramp_tower import DOMINO_FLIP_CAMERA_POS
+from npm_sim.ramp_tower import DOMINO_FLIP_CAMERA_YAW
+from npm_sim.ramp_tower import DOMINO_FLIP_RAMP_LENGTH
+from npm_sim.ramp_tower import DOMINO_FLIP_VIDEO_CROP_HEIGHT
+from npm_sim.ramp_tower import DOMINO_FLIP_VIDEO_CROP_WIDTH
+from npm_sim.ramp_tower import DOMINO_FLIP_VIDEO_CROP_X
+from npm_sim.ramp_tower import DOMINO_FLIP_VIDEO_CROP_Y
+from npm_sim.ramp_tower import DOMINO_FLIP_VIDEO_NUM_FRAMES
+from npm_sim.ramp_tower import RAMP_LENGTH
 from npm_sim.ramp_tower import VIDEO_NUM_FRAMES as JELLY_VIDEO_NUM_FRAMES
 from npm_sim.ramp_tower import render_video as render_jelly_video
 from npm_sim.rigid_ramp_cup import render_video as render_rigid_cup_video
@@ -24,6 +35,38 @@ JELLY_VARIANT_WALL_COUNTS = {
     "jelly": 2,
     "jelly-single": 1,
     "jelly-domino": 2,
+    "jelly-domino-flip": 2,
+}
+
+JELLY_VARIANT_RAMP_LENGTHS = {
+    "jelly": RAMP_LENGTH,
+    "jelly-single": RAMP_LENGTH,
+    "jelly-domino": RAMP_LENGTH,
+    "jelly-domino-flip": DOMINO_FLIP_RAMP_LENGTH,
+}
+
+JELLY_VARIANT_CAMERA_ARGS = {
+    "jelly": {},
+    "jelly-single": {},
+    "jelly-domino": {},
+    "jelly-domino-flip": {
+        "camera_pos": DOMINO_FLIP_CAMERA_POS,
+        "camera_pitch": DOMINO_FLIP_CAMERA_PITCH,
+        "camera_yaw": DOMINO_FLIP_CAMERA_YAW,
+        "camera_fov": DOMINO_FLIP_CAMERA_FOV,
+    },
+}
+
+JELLY_VARIANT_CROP_ARGS = {
+    "jelly": {},
+    "jelly-single": {},
+    "jelly-domino": {},
+    "jelly-domino-flip": {
+        "video_crop_x": DOMINO_FLIP_VIDEO_CROP_X,
+        "video_crop_y": DOMINO_FLIP_VIDEO_CROP_Y,
+        "video_crop_width": DOMINO_FLIP_VIDEO_CROP_WIDTH,
+        "video_crop_height": DOMINO_FLIP_VIDEO_CROP_HEIGHT,
+    },
 }
 
 
@@ -33,7 +76,15 @@ def create_parser() -> argparse.ArgumentParser:
         "--variant",
         type=str,
         default="jelly-domino",
-        choices=["jelly", "jelly-single", "jelly-domino", "rigid", "rigid-cup", "roboarm-wall"],
+        choices=[
+            "jelly",
+            "jelly-single",
+            "jelly-domino",
+            "jelly-domino-flip",
+            "rigid",
+            "rigid-cup",
+            "roboarm-wall",
+        ],
         help="Simulation variant.",
     )
     parser.add_argument(
@@ -49,6 +100,13 @@ def create_parser() -> argparse.ArgumentParser:
         default="wood",
         choices=sorted(MATERIALS),
         help="Material preset for the target and static ground surfaces.",
+    )
+    parser.add_argument(
+        "--target-material",
+        type=str,
+        default=None,
+        choices=sorted(MATERIALS),
+        help="Optional material preset for the rigid tower target only. Defaults to --cube-material.",
     )
     parser.add_argument(
         "--num-frames",
@@ -92,6 +150,7 @@ def main(argv: list[str] | None = None) -> Path:
         "jelly": JELLY_VIDEO_NUM_FRAMES,
         "jelly-single": JELLY_VIDEO_NUM_FRAMES,
         "jelly-domino": JELLY_VIDEO_NUM_FRAMES,
+        "jelly-domino-flip": DOMINO_FLIP_VIDEO_NUM_FRAMES,
         "rigid": JELLY_VIDEO_NUM_FRAMES,
         "rigid-cup": JELLY_VIDEO_NUM_FRAMES,
         "roboarm-wall": ROBOARM_WALL_VIDEO_NUM_FRAMES_BY_MODE[args.roboarm_push_height],
@@ -100,12 +159,15 @@ def main(argv: list[str] | None = None) -> Path:
 
     if num_frames <= 0:
         parser.error("--num-frames must be positive")
+    if args.target_material is not None and args.variant != "rigid":
+        parser.error("--target-material is only supported with --variant rigid")
 
     if args.variant == "rigid":
         return render_rigid_video(
             output_path=args.output_path or "outputs/ramp_tower_rigid.mp4",
             ball_material=args.ball_material,
             cube_material=args.cube_material,
+            target_material=args.target_material,
             num_frames=num_frames,
             device=args.device,
         )
@@ -140,6 +202,7 @@ def main(argv: list[str] | None = None) -> Path:
         "jelly": "outputs/ramp_tower_jelly_domino.mp4",
         "jelly-single": "outputs/ramp_tower_jelly_single.mp4",
         "jelly-domino": "outputs/ramp_tower_jelly_domino.mp4",
+        "jelly-domino-flip": "outputs/ramp_tower_jelly_domino_flip.mp4",
     }
     return render_jelly_video(
         output_path=args.output_path or default_outputs[args.variant],
@@ -148,6 +211,9 @@ def main(argv: list[str] | None = None) -> Path:
         wall_count=JELLY_VARIANT_WALL_COUNTS[args.variant],
         num_frames=num_frames,
         device=args.device,
+        ramp_length=JELLY_VARIANT_RAMP_LENGTHS[args.variant],
+        **JELLY_VARIANT_CAMERA_ARGS[args.variant],
+        **JELLY_VARIANT_CROP_ARGS[args.variant],
     )
 
 
