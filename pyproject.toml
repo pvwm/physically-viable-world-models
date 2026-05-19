@@ -5,11 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "npm-sim"
 version = "0.1.0"
-description = "Minimal Newton rigid-body ramp and tower demo."
+description = "Small Newton and Genesis simulation demos."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
+dependencies = []
+
+[project.optional-dependencies]
+newton = [
     "newton[examples]>=1.1.0",
+]
+genesis = [
+    "genesis-world>=0.4.7",
+]
+calibration = [
+    "matplotlib>=3.7.0",
+    "scipy",
 ]
 
 [tool.setuptools.packages.find]

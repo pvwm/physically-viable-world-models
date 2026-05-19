@@ -5,7 +5,14 @@
 ## Install
 
 ```bash
-python -m pip install -e .
+python -m pip install -e ".[newton]"
+```
+
+For Genesis examples, use a separate environment and install PyTorch for your
+GPU first:
+
+```bash
+python -m pip install -e ".[genesis,calibration]"
 ```
 
 ## Interactive Run
