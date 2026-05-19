@@ -4,6 +4,8 @@ __pycache__/
 *.mp4
 *.json
 *.png
+*.jpg
+*.jpeg
 *.csv
 *.md
 !README.md

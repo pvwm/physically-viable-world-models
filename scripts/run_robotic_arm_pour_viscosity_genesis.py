@@ -58,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Rebuild the chosen settled starting cache before running.",
     )
+    parser.add_argument(
+        "--liquid-vis-mode",
+        choices=["particle", "recon"],
+        default=None,
+        help="Genesis liquid visualization mode.",
+    )
     args = parser.parse_args(argv)
 
     if args.viscosity <= 0.0:
@@ -65,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
 
     mod = _load_module()
     _configure_viscosity(mod, args.viscosity, args.cache_path)
+    if args.liquid_vis_mode is not None:
+        mod.LIQUID_VIS_MODE = args.liquid_vis_mode
     num_frames = mod.VIDEO_NUM_FRAMES if args.num_frames is None else args.num_frames
     if num_frames <= 0:
         parser.error("--num-frames must be positive")

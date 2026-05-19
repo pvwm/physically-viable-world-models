@@ -51,10 +51,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Rebuild the settled starting water cache before running.",
     )
+    parser.add_argument(
+        "--liquid-vis-mode",
+        choices=["particle", "recon"],
+        default=mod.LIQUID_VIS_MODE,
+        help="Genesis liquid visualization mode.",
+    )
     args = parser.parse_args(argv)
 
     if args.num_frames <= 0:
         parser.error("--num-frames must be positive")
+
+    mod.LIQUID_VIS_MODE = args.liquid_vis_mode
 
     if args.no_video:
         result = mod.run_simulation(num_frames=args.num_frames, rebake=args.rebake)
