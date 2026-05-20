@@ -1,6 +1,10 @@
-# Newton-sim
+# Physically Viable World Models
 
-`Newton-sim` is a tiny Newton-on-Warp demo repo with seven small 3D variants: a rigid-body ramp/floor/ball/tower scene, a rigid-body ramp/floor/ball/cup scene, a rigid-body ramp/floor/ball/cup/water scene using Genesis DFSPH water, a Genesis robot-arm water-pouring scene, a deformable jelly single-wall scene, a deformable jelly domino scene with two walls, and a Newton Franka/Panda robot arm whose end-effector accelerates straight into a wall at high or low contact height.
+Supplementary simulation code and rollout videos for "Physically Viable World Models: A Case for Query-Conditioned Embodied AI".
+
+The project contains seven small 3D variants: a rigid-body ramp/floor/ball/tower scene, a rigid-body ramp/floor/ball/cup scene, a rigid-body ramp/floor/ball/cup/water scene using Genesis DFSPH water, a Genesis robot-arm water-pouring scene, a deformable jelly single-wall scene, a deformable jelly domino scene with two walls, and a Newton Franka/Panda robot arm whose end-effector accelerates straight into a wall at high or low contact height.
+
+Supplementary videos: <https://pvwm-paper.github.io/physically-viable-world-models/>
 
 ## Install
 
